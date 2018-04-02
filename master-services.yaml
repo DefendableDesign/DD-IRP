@@ -1,0 +1,122 @@
+Description: >
+
+    This template deploys an ECS cluster and task definitions for running Elasticsearch, 
+    Cortex and The Hive security case management tooling.
+
+    Last Modified: 2 April 2018
+    Author: Glenn Bolton
+
+Parameters:
+    InstanceType:
+        Description: Select the instance type for the ECS cluster nodes.
+        Type: String
+        Default: t2.micro
+        AllowedValues: 
+          - t2.micro
+          - t2.small
+          - t2.medium
+          - t2.large
+          - t2.xlarge
+          - m5.large
+
+    ClusterSize:
+        Description: Enter the ECS cluster node count.
+        Type: Number
+        Default: 2
+
+    VPC:
+        Description: Select the VPC to deploy the ECS cluster to.
+        Type: AWS::EC2::VPC::Id
+
+    Subnets:
+        Description: Select the VPC subnets to deploy the ECS cluster in.
+        Type: List<AWS::EC2::Subnet::Id>
+
+    SourceCidr:
+        Description: The source CidrIp to allow access to The Hive from.
+        Default: 10.0.0.0/8
+        Type: String
+
+    EcrImage:
+        Description: The customised Elasticsearch image (see README.md)
+        Type: String
+        Default: "999999999999.dkr.ecr.ap-southeast-2.amazonaws.com/elasticsearch-for-hive:latest"
+
+Resources:
+
+    SecurityGroups:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://raw.githubusercontent.com/DefendableDesign/DD-IRP/master/infra-security-groups.yaml
+            Parameters: 
+                EnvironmentName: !Ref AWS::StackName
+                VPC: !Ref VPC
+                SourceCidr: !Ref SourceCidr
+
+    ALB:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://raw.githubusercontent.com/DefendableDesign/DD-IRP/master/infra-load-balancers.yaml
+            Parameters:
+                EnvironmentName: !Ref AWS::StackName
+                VPC: !Ref VPC
+                Subnets: !Ref Subnets
+                SecurityGroup: !GetAtt SecurityGroups.Outputs.LoadBalancerSecurityGroup
+
+    ECS:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://raw.githubusercontent.com/DefendableDesign/DD-IRP/master/infra-ecs-cluster.yaml
+            Parameters:
+                EnvironmentName: !Ref AWS::StackName
+                InstanceType: !Ref InstanceType
+                ClusterSize: !Ref ClusterSize
+                VPC: !Ref VPC
+                SecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
+                Subnets: !Ref Subnets
+
+    Elasticsearch:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://raw.githubusercontent.com/DefendableDesign/DD-IRP/master/service-elasticsearch.yaml
+            Parameters:
+                VPC: !GetAtt VPC.Outputs.VPC
+                Cluster: !GetAtt ECS.Outputs.Cluster
+                DesiredCount: 2
+                Listener: !GetAtt ALB.Outputs.Listener 
+                EcrImage: !Ref EcrImage
+                Path: /
+
+    TheHive:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://raw.githubusercontent.com/DefendableDesign/DD-IRP/master/service-the-hive.yaml
+            Parameters:
+                VPC: !GetAtt VPC.Outputs.VPC
+                Cluster: !GetAtt ECS.Outputs.Cluster
+                DesiredCount: 2
+                Listener: !GetAtt ALB.Outputs.Listener 
+                Path: /
+
+    Cortex:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL: https://raw.githubusercontent.com/DefendableDesign/DD-IRP/master/service-cortex.yaml
+            Parameters:
+                VPC: !GetAtt VPC.Outputs.VPC
+                Cluster: !GetAtt ECS.Outputs.Cluster
+                DesiredCount: 2
+                ProductServiceUrl: !Join [ "/", [ !GetAtt ALB.Outputs.LoadBalancerUrl, "products" ]]
+                Listener: !GetAtt ALB.Outputs.Listener 
+                Path: /
+                ECSServiceAutoScalingRoleARN: !GetAtt ECS.Outputs.ECSServiceAutoScalingRole
+
+Outputs:
+
+    ProductServiceUrl: 
+        Description: The URL endpoint for The Hive
+        Value: !Join [ "/", [ !GetAtt ALB.Outputs.LoadBalancerUrl, "products" ]]
+
+    WebsiteServiceUrl: 
+        Description: The URL endpoint for Elasticsearch
+        Value: !Join ["", [ !GetAtt ALB.Outputs.LoadBalancerUrl, "/" ]]

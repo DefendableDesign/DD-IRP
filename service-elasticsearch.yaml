@@ -1,0 +1,141 @@
+Parameters:
+    VPC:
+        Description: The VPC that the ECS cluster is deployed to
+        Type: 'AWS::EC2::VPC::Id'
+    Cluster:
+        Description: Please provide the ECS Cluster ID that this service should run on
+        Type: String
+    DesiredCount:
+        Description: How many instances of this task should we run across our cluster?
+        Type: Number
+        Default: 2
+    EcrImage:
+        Description: The customised Elasticsearch image (see README.md)
+        Type: String
+Resources:
+    Service:
+        Type: 'AWS::ECS::Service'
+        Properties:
+            Cluster:
+                Ref: Cluster
+            Role:
+                Ref: ServiceRole
+            DesiredCount:
+                Ref: DesiredCount
+            TaskDefinition:
+                Ref: TaskDefinition
+            LoadBalancers:
+                -
+                    ContainerName: elasticsearch
+                    ContainerPort: 9200
+                    LoadBalancerName:
+                        Ref: LoadBalancer
+                -
+                    ContainerName: elasticsearch
+                    ContainerPort: 9300
+                    LoadBalancerName:
+                        Ref: LoadBalancer
+    TaskDefinition:
+        Type: 'AWS::ECS::TaskDefinition'
+        Properties:
+            Family: elasticsearch
+            ContainerDefinitions:
+                -
+                    Name: elasticsearch
+                    Essential: true
+                    Image:
+                        Ref: EcrImage
+                    Memory: 1024
+                    Environment:
+                        -
+                            Name: REGION
+                            Value:
+                                Ref: 'AWS::Region'
+                        -
+                            Name: ES_JAVA_OPTS
+                            Value: '-Xms8g -Xmx8g'
+                    PortMappings:
+                        -
+                            ContainerPort: 9200
+                            HostPort: 9200
+                            Protocol: tcp
+                        -
+                            ContainerPort: 9300
+                            HostPort: 9300
+                            Protocol: tcp
+                    DockerLabels:
+                        -
+                            Owner: Platform
+                        -
+                            Application: Elasticsearch
+                    LogConfiguration:
+                        LogDriver: awslogs
+                        Options:
+                            awslogs-group:
+                                Ref: 'AWS::StackName'
+                            awslogs-region:
+                                Ref: 'AWS::Region'
+    CloudWatchLogsGroup:
+        Type: 'AWS::Logs::LogGroup'
+        Properties:
+            LogGroupName:
+                Ref: 'AWS::StackName'
+            RetentionInDays: 365
+    LoadBalancer:
+        Type: 'AWS::ElasticLoadBalancing::LoadBalancer'
+        Properties:
+            AvailabilityZones:
+                'Fn::GetAZs': ''
+            Listeners:
+                -
+                    LoadBalancerPort: 9200
+                    InstancePort: 9200
+                    Protocol: HTTP
+                -
+                    LoadBalancerPort: 9300
+                    InstancePort: 9300
+                    Protocol: TCP
+            HealthCheck:
+                Target: 'HTTP:9200/_cat/health'
+                HealthyThreshold: '3'
+                UnhealthyThreshold: '5'
+                Interval: '30'
+                Timeout: '5'
+    ServiceRole:
+        Type: 'AWS::IAM::Role'
+        Properties:
+            RoleName:
+                Sub: 'ecs-service-${AWS::StackName}'
+            Path: /
+            AssumeRolePolicyDocument: |
+                {
+                    "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": { "Service": [ "ecs.amazonaws.com" ]},
+                        "Action": [ "sts:AssumeRole" ]
+                    }]
+                }
+            Policies:
+                -
+                    PolicyName:
+                        Sub: 'ecs-service-${AWS::StackName}'
+                    PolicyDocument:
+                        Version: '2012-10-17'
+                        Statement:
+                            -
+                                Effect: Allow
+                                Action:
+                                    - 'ec2:AuthorizeSecurityGroupIngress'
+                                    - 'ec2:Describe*'
+                                    - >-
+                                        elasticloadbalancing:DeregisterInstancesFromLoadBalancer
+                                    - 'elasticloadbalancing:Describe*'
+                                    - >-
+                                        elasticloadbalancing:RegisterInstancesWithLoadBalancer
+                                    - 'elasticloadbalancing:DeregisterTargets'
+                                    - >-
+                                        elasticloadbalancing:DescribeTargetGroups
+                                    - >-
+                                        elasticloadbalancing:DescribeTargetHealth
+                                    - 'elasticloadbalancing:RegisterTargets'
+                                Resource: '*'
