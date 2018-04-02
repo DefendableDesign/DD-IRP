@@ -1,7 +1,7 @@
 Parameters:
-    VPC:
-        Description: The VPC that the ECS cluster is deployed to
-        Type: 'AWS::EC2::VPC::Id'
+    Subnets:
+        Description: Choose which subnets this ECS cluster should be deployed to
+        Type: 'List<AWS::EC2::Subnet::Id>'
     Cluster:
         Description: Please provide the ECS Cluster ID that this service should run on
         Type: String
@@ -12,6 +12,9 @@ Parameters:
     EcrImage:
         Description: The customised Elasticsearch image (see README.md)
         Type: String
+    SecurityGroup:
+        Description: Select the Security Group to apply to the Application Load Balancer
+        Type: AWS::EC2::SecurityGroup::Id
 Resources:
     Service:
         Type: 'AWS::ECS::Service'
@@ -30,22 +33,22 @@ Resources:
                     ContainerPort: 9200
                     LoadBalancerName:
                         Ref: LoadBalancer
-                -
-                    ContainerName: elasticsearch
-                    ContainerPort: 9300
-                    LoadBalancerName:
-                        Ref: LoadBalancer
     TaskDefinition:
         Type: 'AWS::ECS::TaskDefinition'
         Properties:
             Family: elasticsearch
+            Volumes:
+                -
+                    Name: esdata
+                    Host: 
+                        SourcePath: /usr/share/elasticsearch/data/
             ContainerDefinitions:
                 -
                     Name: elasticsearch
                     Essential: true
                     Image:
                         Ref: EcrImage
-                    Memory: 1024
+                    MemoryReservation: 512
                     Environment:
                         -
                             Name: REGION
@@ -53,7 +56,7 @@ Resources:
                                 Ref: 'AWS::Region'
                         -
                             Name: ES_JAVA_OPTS
-                            Value: '-Xms8g -Xmx8g'
+                            Value: '-Xms512m -Xmx512m'
                     PortMappings:
                         -
                             ContainerPort: 9200
@@ -64,10 +67,8 @@ Resources:
                             HostPort: 9300
                             Protocol: tcp
                     DockerLabels:
-                        -
-                            Owner: Platform
-                        -
-                            Application: Elasticsearch
+                        Owner: Platform
+                        Application: Elasticsearch
                     LogConfiguration:
                         LogDriver: awslogs
                         Options:
@@ -75,6 +76,20 @@ Resources:
                                 Ref: 'AWS::StackName'
                             awslogs-region:
                                 Ref: 'AWS::Region'
+                    Ulimits:
+                        -
+                            Name: nofile
+                            SoftLimit: 65536
+                            HardLimit: 65536
+                        -
+                            Name: nproc
+                            SoftLimit: 4096
+                            HardLimit: 4096
+                    MountPoints:
+                        -
+                            ContainerPath: /usr/share/elasticsearch/data/
+                            SourceVolume: esdata
+                            ReadOnly: false
     CloudWatchLogsGroup:
         Type: 'AWS::Logs::LogGroup'
         Properties:
@@ -84,8 +99,10 @@ Resources:
     LoadBalancer:
         Type: 'AWS::ElasticLoadBalancing::LoadBalancer'
         Properties:
-            AvailabilityZones:
-                'Fn::GetAZs': ''
+            SecurityGroups:
+                - Ref: SecurityGroup
+            Subnets:
+                Ref: Subnets
             Listeners:
                 -
                     LoadBalancerPort: 9200
@@ -105,7 +122,7 @@ Resources:
         Type: 'AWS::IAM::Role'
         Properties:
             RoleName:
-                Sub: 'ecs-service-${AWS::StackName}'
+                Fn::Sub: 'ecs-service-${AWS::StackName}'
             Path: /
             AssumeRolePolicyDocument: |
                 {
@@ -118,7 +135,7 @@ Resources:
             Policies:
                 -
                     PolicyName:
-                        Sub: 'ecs-service-${AWS::StackName}'
+                        Fn::Sub: 'ecs-service-${AWS::StackName}'
                     PolicyDocument:
                         Version: '2012-10-17'
                         Statement:

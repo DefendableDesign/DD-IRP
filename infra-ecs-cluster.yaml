@@ -67,8 +67,7 @@ Resources:
                 Ref: ECSLaunchConfiguration
             MinSize:
                 Ref: ClusterSize
-            MaxSize:
-                Ref: ClusterSize
+            MaxSize: 10
             DesiredCapacity:
                 Ref: ClusterSize
             Tags:
@@ -77,6 +76,10 @@ Resources:
                     Value:
                         Fn::Sub: '${EnvironmentName} ECS host'
                     PropagateAtLaunch: true
+                -
+                    Key: ElasticSearch
+                    Value: esnode
+                    PropagateAtLaunch: true
         CreationPolicy:
             ResourceSignal:
                 Timeout: PT15M
@@ -84,7 +87,7 @@ Resources:
             AutoScalingRollingUpdate:
                 MinInstancesInService: 1
                 MaxBatchSize: 1
-                PauseTime: PT15M
+                PauseTime: PT30M
                 SuspendProcesses:
                     - HealthCheck
                     - ReplaceUnhealthy
@@ -113,8 +116,6 @@ Resources:
                     Fn::Sub: |
                         #!/bin/bash
                         exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
-                        /sbin/resize2fs /dev/xvda
-                        sysctl -w vm.max_map_count=262144
                         yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
                         yum install -y aws-cfn-bootstrap hibagent
                         /opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchConfiguration
@@ -122,9 +123,10 @@ Resources:
                         /usr/bin/enable-ec2-spot-hibernation
             BlockDeviceMappings:
                 -
-                    DeviceName: /dev/xvda
+                    DeviceName: /dev/sdf
                     Ebs:
-                        VolumeSize: "20"
+                        DeleteOnTermination: "true"
+                        VolumeSize: "30"
                         VolumeType: "gp2"
         Metadata:
             'AWS::CloudFormation::Init':
@@ -136,8 +138,21 @@ Resources:
                         01_add_instance_to_cluster:
                             command:
                                 Fn::Sub: >-
-                                    echo ECS_CLUSTER=${ECSCluster} >>
-                                    /etc/ecs/ecs.config
+                                    echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+                        02_set_max_map_count:
+                            command: sysctl -w vm.max_map_count=262144
+                        03_create_mount_point:
+                            command: mkdir -p /usr/share/elasticsearch/data/
+                        04_initialise_data_volume:
+                            command: mkfs -t ext4 /dev/sdf
+                        05_mount_data_volume:
+                            command: mount /dev/sdf /usr/share/elasticsearch/data/
+                        06_automount_data_volume:
+                            command: echo "/dev/sdf /usr/share/elasticsearch/data/ ext4 defaults,nofail 0 2" >> /etc/fstab
+                        07_set_mount_point_ownership:
+                            command: chown -R 1000.1000 /usr/share/elasticsearch/data/
+                        09_set_mount_point_permissions:
+                            command: chmod -R 0760 /usr/share/elasticsearch/data/
                     files:
                         /etc/cfn/cfn-hup.conf:
                             mode: 256
@@ -150,7 +165,7 @@ Resources:
                                     region=${AWS::Region}
                         /etc/cfn/hooks.d/cfn-auto-reloader.conf:
                             content:
-                                Fn::Sub: >
+                                Fn::Sub: |
                                     [cfn-auto-reloader-hook]
                                     triggers=post.update
                                     path=Resources.ECSLaunchConfiguration.Metadata.AWS::CloudFormation::Init
@@ -164,7 +179,7 @@ Resources:
                                     region = ${AWS::Region}
                         /etc/awslogs/awslogs.conf:
                             content:
-                                Fn::Sub: >
+                                Fn::Sub: |
                                     [general]
                                     state_file = /var/lib/awslogs/agent-state
 
@@ -240,6 +255,7 @@ Resources:
                             "Statement": [{
                                 "Effect": "Allow",
                                 "Action": [
+                                    "ec2:DescribeInstances",
                                     "ecs:CreateCluster",
                                     "ecs:DeregisterContainerInstance",
                                     "ecs:DiscoverPollEndpoint",
@@ -280,13 +296,7 @@ Resources:
                                     "logs:CreateLogStream",
                                     "logs:DescribeLogGroups",
                                     "logs:DescribeLogStreams",
-                                    "logs:PutLogEvents",
-                                    "s3:PutObject",
-                                    "s3:GetObject",
-                                    "s3:AbortMultipartUpload",
-                                    "s3:ListMultipartUploadParts",
-                                    "s3:ListBucket",
-                                    "s3:ListBucketMultipartUploads"
+                                    "logs:PutLogEvents"
                                 ],
                                 "Resource": "*"
                             }]

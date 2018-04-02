@@ -36,6 +36,9 @@ Parameters:
             The name of the S3 bucket which contains the CloudFormation
             templates.
         Type: String
+    EcrImage:
+        Description: The ECR URI for the customised Elasticsearch docker image (see README.md)
+        Type: String
 Resources:
     SecurityGroups:
         Type: 'AWS::CloudFormation::Stack'
@@ -72,8 +75,11 @@ Resources:
                 VPC:
                     Ref: VPC
                 Subnets:
-                    Ref: Subnets
-                SecurityGroup: !GetAtt SecurityGroups.Outputs.LoadBalancerSecurityGroup
+                    Fn::Join:
+                        - ','
+                        - Ref: Subnets
+                SecurityGroup: 
+                    Fn::Sub: ${SecurityGroups.Outputs.LoadBalancerSecurityGroup}
     ECS:
         Type: 'AWS::CloudFormation::Stack'
         Properties:
@@ -94,6 +100,32 @@ Resources:
                     Ref: ClusterSize
                 VPC:
                     Ref: VPC
-                SecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
+                SecurityGroup: 
+                    Fn::Sub: ${SecurityGroups.Outputs.ECSHostSecurityGroup}
                 Subnets:
-                    Ref: Subnets
+                    Fn::Join:
+                        - ','
+                        - Ref: Subnets
+    Elasticsearch:
+        Type: AWS::CloudFormation::Stack
+        Properties:
+            TemplateURL:
+                Fn::Join:
+                    - ''
+                    -
+                        - 'https://s3.amazonaws.com/'
+                        -
+                            Ref: CodeBucket
+                        - /service-elasticsearch.yaml
+            Parameters:
+                Subnets:
+                    Fn::Join:
+                        - ','
+                        - Ref: Subnets
+                Cluster: 
+                    Fn::Sub: ${ECS.Outputs.Cluster}
+                DesiredCount: 2
+                SecurityGroup: 
+                    Fn::Sub: ${SecurityGroups.Outputs.LoadBalancerSecurityGroup}
+                EcrImage: 
+                    Ref: EcrImage

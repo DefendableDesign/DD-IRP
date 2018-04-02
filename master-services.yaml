@@ -80,12 +80,10 @@ Resources:
         Properties:
             TemplateURL: https://raw.githubusercontent.com/DefendableDesign/DD-IRP/master/service-elasticsearch.yaml
             Parameters:
-                VPC: !GetAtt VPC.Outputs.VPC
+                Subnets: !Ref Subnets
                 Cluster: !GetAtt ECS.Outputs.Cluster
                 DesiredCount: 2
-                Listener: !GetAtt ALB.Outputs.Listener 
                 EcrImage: !Ref EcrImage
-                Path: /
 
     TheHive:
         Type: AWS::CloudFormation::Stack
